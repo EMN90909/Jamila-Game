@@ -1,6 +1,23 @@
 # Jamila Game · Godot Development Agent
 
-**Native C++17 desktop + a real Godot MCP tool-calling loop.** Jamila Game focuses on Godot project exploration, scenes, scripts, debugging, and controlled edits/playtests. The UI uses ink-black `#11110F` and paper-cream `#F4EEDF`. This is a functional **v0.2 native foundation**, not a complete port of the original VS Code-based Jamila-GD.
+**Native C++17 desktop + a real Godot MCP tool-calling loop.** Jamila Game focuses on Godot project exploration, scenes, scripts, debugging, and controlled edits/playtests. The UI uses ink-black `#11110F` and paper-cream `#F4EEDF`. This is a functional **v0.3 native foundation**, not a complete port of the original VS Code-based Jamila-GD.
+
+## New in v0.3: Custom MCPs and approval notifications
+
+- **Multi-server native host:** Connect independent Godot, GitHub and custom local stdio MCP servers. The model sees each server's advertised tools. Tool names are namespaced (`godot__...`, `github__...`) when multiple servers connect.
+- **Approval notifications:** In Human Approval mode the AI pauses at an actionable in-app notification with **OK** (continue), **Review** (inspect arguments and approve/deny) and **Deny**. X11 raises the window and rings its bell.
+- **Settings -> Execution Policy:** Switch between **Human Approval** (default) and **Allow All** (skip per-call permission for connected servers). An additional confirmation is required to enable Allow All in the GUI. The choice persists, with no secrets written to settings.
+- **Custom MCP settings:** `--mcp-config /path/to/trusted/servers.json` accepts `mcpServers`, `command`, `args`, `disabled`, `${ENV_NAME}` environment references, and optional `includeTools` filter. Server failures are isolated; no remote server is started without explicit configuration.
+- **Tests:** Added multi-server routing, configuration validation, approval persistence and Godot path-guard regression coverage.
+
+See [MCP host and approvals](docs/MCP_HOST_AND_APPROVALS.md) and [example config](config/mcp-servers.example.json). Only **local stdio MCP** is currently supported, not remote Streamable HTTP/OAuth MCP. Connecting an MCP tool server does not itself provide ChatGPT/Claude model access; the reasoning model still needs a compatible API connection.
+
+```sh
+cp config/mcp-servers.example.json /tmp/my-servers.json
+export JAMILA_API_KEY='your-provider-key'
+./build/jamila-game --workspace /path/to/game --mcp-config /tmp/my-servers.json --gui
+# CLI: /settings, /approval human, /approval allow-all, /tools, /doctor
+```
 
 ## What changed in v0.2
 

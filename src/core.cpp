@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -111,12 +112,41 @@ Agent::Agent(Config config) : config_(std::move(config)) {
     if (config_.api_url.empty()) config_.api_url = env_or("JAMILA_API_URL", "https://api.openai.com/v1/chat/completions");
     if (config_.api_key.empty()) config_.api_key = env_or("JAMILA_API_KEY", "");
     if (config_.model.empty()) config_.model = env_or("JAMILA_MODEL", "gpt-4o-mini");
-    if (!config_.mcp_command.empty()) mcp_ = std::make_unique<McpClient>(config_.workspace, config_.mcp_command);
+    if (!config_.mcp_command.empty()) config_.mcp_servers.insert(config_.mcp_servers.begin(),
+        {"godot",config_.mcp_command,{},{}});
+    // Each MCP is isolated: one client, one subprocess, independent errors.
+    std::map<std::string, unsigned> used_names;
+    for (const auto& spec : config_.mcp_servers) {
+        if (spec.name.empty() || spec.name.size()>32 || ++used_names[spec.name] > 1)
+            throw std::invalid_argument("MCP server names must be unique and 1..32 characters");
+        try { servers_.push_back({spec.name,std::make_unique<McpClient>(config_.workspace,spec.command,spec.env)}); }
+        catch (const std::exception& e) { connection_errors_.push_back(spec.name+": "+e.what()); }
+    }
+    for (size_t i=0;i<servers_.size();++i) {
+        for (const auto& tool : servers_[i].client->tools()) {
+            const auto& selected=config_.mcp_servers; // server specs were validated before connection
+            auto match=std::find_if(selected.begin(),selected.end(),[&](const McpServerConfig& c){return c.name==servers_[i].name;});
+            if (match!=selected.end() && !match->include_tools.empty() &&
+                std::find(match->include_tools.begin(),match->include_tools.end(),tool.name)==match->include_tools.end()) continue;
+            if (exposed_tools_.size()>=128)
+                throw std::runtime_error("Too many MCP tools (max 128). Configure includeTools per server.");
+            // Stable, provider-compatible name; maintain a private mapping to the exact MCP name.
+            std::string full = servers_.size()==1 ? tool.name : servers_[i].name+"__"+tool.name;
+            std::string n=full;
+            for(char& ch:n) if(!((ch>='A'&&ch<='Z')||(ch>='a'&&ch<='z')||
+                                   (ch>='0'&&ch<='9')||ch=='_'||ch=='-')) ch='_';
+            if (n.size()>64) n=n.substr(0,44)+"_"+std::to_string(fingerprint(full));
+            if (n.size()>64) n.resize(64);
+            if (!routing_.emplace(n,std::make_pair(i,tool.name)).second)
+                throw std::runtime_error("MCP tool name collision: "+n);
+            exposed_tools_.push_back({n,"["+servers_[i].name+"] "+tool.description,tool.input_schema});
+        }
+    }
 }
 
 std::string Agent::ask(const std::string& prompt) {
     if (prompt.empty() || prompt.size() > 32768) throw std::invalid_argument("prompt must be 1..32768 bytes");
-    if (mcp_) return ask_godot(prompt);
+    if (has_mcp()) return ask_godot(prompt);
     if (config_.api_key.empty() && config_.api_url.rfind("http://localhost:", 0) != 0 &&
         config_.api_url.rfind("http://127.0.0.1:", 0) != 0)
         throw std::runtime_error("set JAMILA_API_KEY before calling a remote provider");

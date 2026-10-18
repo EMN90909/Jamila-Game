@@ -1,6 +1,7 @@
 #pragma once
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,8 @@ struct McpTool {
 // Owns one local stdio MCP process. No shell is ever involved in spawning it.
 class McpClient {
 public:
-    McpClient(const std::filesystem::path& workspace, const std::vector<std::string>& argv);
+    McpClient(const std::filesystem::path& workspace, const std::vector<std::string>& argv,
+              const std::map<std::string, std::string>& env = {});
     ~McpClient();
     McpClient(const McpClient&) = delete;
     McpClient& operator=(const McpClient&) = delete;

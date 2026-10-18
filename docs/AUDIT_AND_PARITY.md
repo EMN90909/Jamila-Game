@@ -48,3 +48,8 @@
 ## Testing notes
 
 `./build.sh` builds C++ and runs CTest. It does not automatically test live LLM providers; tests use a loopback mock. GUI display startup was manually smoke-tested under Xvfb, not a UI interaction test. License compatibility must be reviewed if upstream code is copied verbatim in future migrations.
+
+
+## v0.3 extension (2026-10-18)
+
+Jamila hosts independent local stdio MCP servers, merges namespaced tool schemas and offers persistent Human Approval versus Allow All with an actionable in-app notification. See [MCP_HOST_AND_APPROVALS.md](MCP_HOST_AND_APPROVALS.md) for limits and tests. This is still not a full port of Jamila-GD; remote MCP transports, provider-specific auth and advanced UI remain work in progress.

@@ -2,6 +2,7 @@
 #include <json-c/json.h>
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -38,7 +39,8 @@ Json parse(const std::string& s) {
 }
 void close_fd(int& fd) { if (fd >= 0) { ::close(fd); fd = -1; } }
 }
-McpClient::McpClient(const std::filesystem::path& workspace, const std::vector<std::string>& argv) {
+McpClient::McpClient(const std::filesystem::path& workspace, const std::vector<std::string>& argv,
+                     const std::map<std::string, std::string>& env) {
     if (argv.empty() || argv.front().empty() || argv.size() > 32)
         throw std::invalid_argument("MCP executable and at most 31 arguments required");
     int to_child[2], from_child[2];
@@ -59,6 +61,9 @@ McpClient::McpClient(const std::filesystem::path& workspace, const std::vector<s
             ::chdir(workspace.c_str()) != 0) _exit(126);
         ::close(to_child[0]); ::close(from_child[1]);
         // Third-party servers may log on stderr, never mix it with protocol stdout.
+        for (const auto& [name, value] : env) {
+            if (::setenv(name.c_str(), value.c_str(), 1) != 0) _exit(125);
+        }
         std::vector<char*> args;
         for (const auto& arg : argv) args.push_back(const_cast<char*>(arg.c_str()));
         args.push_back(nullptr);
