@@ -1,4 +1,6 @@
 #include "jamila/core.hpp"
+#include "jamila/notifications.hpp"
+#include <poll.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
@@ -61,7 +63,7 @@ struct View {
         rectangle(0,0,SIDEBAR,height,DARK);
         rectangle(SIDEBAR,0,width-SIDEBAR,79,PAPER_INK);
         label(27,45,"JAMILA",CREAM);
-        label(27,68,"GAME DEV   /   0.3",MUTED);
+        label(27,68,"GAME DEV   /   0.4",MUTED);
         rectangle(17,100,SIDEBAR-34,37,CREAM); label(33,124,"+  NEW SESSION",DARK);
         label(27,174,"GODOT PROJECT",MUTED);
         auto workspace = agent.config().workspace.filename().string();
@@ -84,7 +86,7 @@ struct View {
         rectangle(17,static_cast<int>(height)-156,SIDEBAR-34,39,PANEL);
         label(27,static_cast<int>(height)-131,"SETTINGS  /  APPROVAL",CREAM);
         label(27,height-82,agent.approval_mode()==jamila::ApprovalMode::Human?"HUMAN APPROVAL":"ALLOW ALL  /  ACTIVE",agent.approval_mode()==jamila::ApprovalMode::Human?MUTED:CREAM);
-        label(27,height-59,"C++ CORE / MCP TOOLS",MUTED);
+        label(27,height-59,agent.team_mode()?"MULTI-AGENT   /   ON":"MULTI-AGENT   /   OFF",MUTED);
         label(27,height-39,"ZIG + NOQERI  /  LINUX",MUTED);
         label(SIDEBAR+27,40,"GODOT  /  AI DEVELOPMENT WORKSPACE",CREAM);
         label(width-145,41,agent.has_mcp()?"TOOLS ONLINE":"CHAT ONLY",ACCENT);
@@ -132,7 +134,8 @@ struct View {
             rectangle(bx+18,by+197,bw-36,74,ACCENT);
             label(bx+30,by+224,agent.approval_mode()==jamila::ApprovalMode::AllowAll?"[X] ALLOW ALL":"[ ] ALLOW ALL",PAPER_INK);
             label(bx+30,by+248,"Execute connected MCP tools without approval prompts.",PAPER_INK);
-            label(bx+18,by+297,"Only connect MCP servers you trust. Not an OS sandbox.",PAPER_INK);
+            label(bx+18,by+285,"Only connect MCP servers you trust. Not an OS sandbox.",PAPER_INK);
+            label(bx+18,by+316,agent.team_mode()?"[X] PARALLEL AGENTS  (specialists + developer)":"[ ] PARALLEL AGENTS  (specialists + developer)",PAPER_INK);
             if(confirm_unattended) {
                 rectangle(bx+15,by+115,bw-30,207,DARK);
                 label(bx+31,by+151,"ENABLE UNATTENDED ACTIONS?",CREAM);
@@ -184,11 +187,23 @@ struct View {
         approve_name=name;
         approve_args=args.substr(0,1500);
         status="Action waiting for approval: "+name;
-        XRaiseWindow(d,w);
-        XBell(d,50);
+        jamila::DesktopApprovalNotification desktop;
+        const bool system_notification = desktop.show(name);
+        // System notification works even when the Jamila window is minimized.
+        // In-app buttons remain a fallback if the desktop daemon lacks actions.
+        if (!system_notification) { XRaiseWindow(d,w); XBell(d,50); }
         draw();
         auto decide=[&](bool ok) { awaiting_approval=false; review_expanded=false; status=ok?"Action approved":"Action denied"; draw(); return ok; };
         while(true) {
+            const auto action=desktop.poll_action();
+            if(action=="approve")return decide(true);
+            if(action=="deny")return decide(false);
+            if(action=="review") { review_expanded=true; XRaiseWindow(d,w); draw(); }
+            if (!XPending(d)) {
+                struct pollfd fd{ConnectionNumber(d),POLLIN,0};
+                ::poll(&fd,1,120); // Also wakes to check D-Bus action signals.
+                continue;
+            }
             XEvent e;
             XNextEvent(d,&e);
             if(e.type==KeyPress) {
@@ -237,6 +252,7 @@ struct View {
                 catch(const std::exception& e) { status=e.what(); }
             } else if(y>=by+197 && y<=by+271 && x>=bx+18 && x<=bx+bw-18)
                 confirm_unattended=true;
+            else if(y>=by+300 && y<=by+326) {agent.set_team_mode(!agent.team_mode());status=agent.team_mode()?"Parallel team enabled":"Parallel team disabled";}
             else if(y>=by+327 && y<=by+364 && x>=bx+bw-118) show_settings=false;
         }
         draw();

@@ -26,7 +26,7 @@ int main(int argc,char** argv) {
     jamila::Config cfg;
     cfg.workspace=root; cfg.mcp_servers=specs; cfg.settings_file=settings;
     jamila::Agent agent(cfg);
-    assert(agent.server_count()==2 && agent.mcp_tools().size()==3);
+    assert(agent.server_count()==2 && agent.mcp_tools().size()==6);
     assert(agent.call_mcp("godot__get_project_info",R"({})").find("mock scene tree")!=std::string::npos);
     assert(agent.call_mcp("github__create_scene",R"({"path":"/outside/of/the/project"})").find("Denied")!=std::string::npos);
     int approvals=0;

@@ -4,6 +4,7 @@
 #include <memory>
 #include <map>
 #include "jamila/mcp.hpp"
+#include "jamila/skills.hpp"
 #include <string>
 #include <vector>
 
@@ -22,8 +23,10 @@ struct Config {
     std::string api_key;
     std::string model;
     std::vector<std::string> mcp_command; // legacy single-server flag
+    std::string provider; // openai (compatible) or anthropic (Claude Messages API)
     std::vector<McpServerConfig> mcp_servers;
     ApprovalMode approval_mode = ApprovalMode::Human;
+    bool team_mode = false; // Read-only parallel planning scouts before the main tool loop
     std::filesystem::path settings_file;
 };
 
@@ -32,6 +35,8 @@ std::string read_text(const std::filesystem::path& root, const std::filesystem::
 void write_text(const std::filesystem::path& root, const std::filesystem::path& relative, const std::string& text);
 int execute_argv(const std::filesystem::path& cwd, const std::vector<std::string>& args);
 unsigned long long fingerprint(const std::string& text);
+const std::vector<McpTool>& native_workspace_tools();
+std::string run_native_workspace_tool(const std::filesystem::path&, const std::string&, const std::string&);
 
 class Agent {
 public:
@@ -45,11 +50,14 @@ public:
     ApprovalMode approval_mode() const { return config_.approval_mode; }
     void set_approval_mode(ApprovalMode mode);
     const std::vector<McpTool>& mcp_tools() const;
+    const std::vector<Skill>& skills() const { return skills_; }
     std::string call_mcp(const std::string& name, const std::string& arguments_json);
     const std::vector<std::string>& activity() const { return activity_; }
     void clear() { history_.clear(); }
     const std::vector<Message>& history() const { return history_; }
     const Config& config() const { return config_; }
+    void set_team_mode(bool enabled) { config_.team_mode=enabled; }
+    bool team_mode() const { return config_.team_mode; }
 private:
     Config config_;
     std::vector<Message> history_;
@@ -60,6 +68,7 @@ private:
     std::vector<std::string> connection_errors_;
     std::function<bool(const std::string&, const std::string&)> approval_;
     std::vector<std::string> activity_;
+    std::vector<Skill> skills_;
     std::string ask_godot(const std::string& prompt);
     bool authorize(const std::string& exposed_name, const std::string& arguments_json);
 };

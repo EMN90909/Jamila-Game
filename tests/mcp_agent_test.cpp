@@ -39,7 +39,7 @@ int main(int argc,char** argv) {
     fs::path root=temp;
     { std::ofstream p(root/"project.godot"); p << "config_version=5\n"; }
     jamila::Agent agent({root,"http://127.0.0.1:1/v1/chat/completions","","test",{argv[1]}});
-    assert(agent.has_mcp()); assert(agent.mcp_tools().size()==2);
+    assert(agent.has_mcp()); assert(agent.mcp_tools().size()==5);
     auto info=agent.call_mcp("get_project_info",std::string("{\"projectPath\":\"")+root.string()+"\"}");
     assert(info.find("mock scene tree")!=std::string::npos);
     assert(agent.call_mcp("create_scene",R"({"scenePath":"res://scenes/level.tscn"})").find("Denied")!=std::string::npos);

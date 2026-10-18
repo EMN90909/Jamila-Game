@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <algorithm>
 #include <fstream>
+#include <atomic>
+#include <sys/stat.h>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -63,17 +65,53 @@ std::string read_text(const fs::path& root, const fs::path& relative) {
 
 void write_text(const fs::path& root, const fs::path& relative, const std::string& text) {
     if (text.size() > MAX_FILE) throw std::runtime_error("write exceeds 1 MiB limit");
-    fs::path p = resolve_in_workspace(root, relative);
-    // Avoid following the final symlink even if it is swapped after validation.
-    int fd = ::open(p.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (fd < 0) throw std::runtime_error(std::string("cannot open output: ") + std::strerror(errno));
-    size_t offset = 0;
-    while (offset < text.size()) {
-        ssize_t n = ::write(fd, text.data() + offset, text.size() - offset);
-        if (n <= 0) { int saved = errno; ::close(fd); throw std::runtime_error(std::strerror(saved)); }
-        offset += static_cast<size_t>(n);
-    }
-    if (::close(fd)) throw std::runtime_error("error closing output file");
+    // The canonical path guard checks the intended target. Walk from the root via
+    // dirfds with O_NOFOLLOW to prevent directory symlink replacement races.
+    const auto p = resolve_in_workspace(root,relative);
+    const auto canonical_root=fs::canonical(root);
+    const auto rel=p.lexically_relative(canonical_root);
+    const int base=::open(canonical_root.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if(base<0)throw std::runtime_error("could not open workspace directory");
+    int dir=base;
+    auto it=rel.begin();
+    const auto last=std::prev(rel.end());
+    try {
+        for(;it!=last;++it){
+            const auto part=it->string();
+            if(part.empty() || part=="." || part=="..")throw std::invalid_argument("invalid output directory");
+            if(::mkdirat(dir,part.c_str(),0700)<0 && errno!=EEXIST)
+                throw std::runtime_error("could not create output directory");
+            int next=::openat(dir,part.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+            if(next<0)throw std::runtime_error("unsafe or inaccessible output directory");
+            ::close(dir);dir=next;
+        }
+        const auto filename=last->string();
+        if(filename.empty() || filename=="." || filename=="..")throw std::invalid_argument("invalid output filename");
+        struct stat existing{};
+        const bool exists=::fstatat(dir,filename.c_str(),&existing,AT_SYMLINK_NOFOLLOW)==0;
+        if(exists && !S_ISREG(existing.st_mode))throw std::runtime_error("destination must be regular file");
+        static std::atomic<unsigned> counter{0};
+        const auto tmp=".jamila-tmp-"+std::to_string(::getpid())+"-"+std::to_string(counter.fetch_add(1));
+        const int fd=::openat(dir,tmp.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        if(fd<0)throw std::runtime_error("could not open temporary file");
+        try {
+            if(exists)::fchmod(fd,existing.st_mode&0777);
+            size_t offset=0;
+            while(offset<text.size()){
+                const auto n=::write(fd,text.data()+offset,text.size()-offset);
+                if(n<0 && errno==EINTR)continue;
+                if(n<=0)throw std::runtime_error("file write failed");
+                offset+=static_cast<size_t>(n);
+            }
+            if(::fsync(fd)!=0)throw std::runtime_error("file sync failed");
+            if(::close(fd)!=0)throw std::runtime_error("file close failed");
+            if(::renameat(dir,tmp.c_str(),dir,filename.c_str())!=0)throw std::runtime_error("atomic file replace failed");
+            ::fsync(dir);
+        } catch (...) {
+            ::close(fd);::unlinkat(dir,tmp.c_str(),0);throw;
+        }
+        ::close(dir);
+    }catch(...){::close(dir);throw;}
 }
 
 int execute_argv(const fs::path& cwd, const std::vector<std::string>& args) {
@@ -109,7 +147,12 @@ unsigned long long fingerprint(const std::string& text) {
 
 Agent::Agent(Config config) : config_(std::move(config)) {
     config_.workspace = fs::canonical(config_.workspace);
-    if (config_.api_url.empty()) config_.api_url = env_or("JAMILA_API_URL", "https://api.openai.com/v1/chat/completions");
+    skills_ = discover_skills(config_.workspace);
+    if (config_.provider.empty()) config_.provider=env_or("JAMILA_PROVIDER","openai");
+    if (config_.provider!="openai" && config_.provider!="anthropic")
+        throw std::invalid_argument("provider must be openai or anthropic");
+    if (config_.api_url.empty()) config_.api_url=env_or("JAMILA_API_URL",
+        config_.provider=="anthropic"?"https://api.anthropic.com/v1/messages":"https://api.openai.com/v1/chat/completions");
     if (config_.api_key.empty()) config_.api_key = env_or("JAMILA_API_KEY", "");
     if (config_.model.empty()) config_.model = env_or("JAMILA_MODEL", "gpt-4o-mini");
     if (!config_.mcp_command.empty()) config_.mcp_servers.insert(config_.mcp_servers.begin(),
@@ -142,11 +185,17 @@ Agent::Agent(Config config) : config_(std::move(config)) {
             exposed_tools_.push_back({n,"["+servers_[i].name+"] "+tool.description,tool.input_schema});
         }
     }
+    for(const auto& native:native_workspace_tools()) {
+        if(!routing_.count(native.name))exposed_tools_.push_back(native);
+        else throw std::runtime_error("MCP name shadows reserved native tool: "+native.name);
+    }
 }
 
 std::string Agent::ask(const std::string& prompt) {
     if (prompt.empty() || prompt.size() > 32768) throw std::invalid_argument("prompt must be 1..32768 bytes");
-    if (has_mcp()) return ask_godot(prompt);
+    return ask_godot(prompt);
+    /* Legacy advice-only path retained for reference; native workspace tools now
+       make the tool-calling pipeline available even with no MCP server. */
     if (config_.api_key.empty() && config_.api_url.rfind("http://localhost:", 0) != 0 &&
         config_.api_url.rfind("http://127.0.0.1:", 0) != 0)
         throw std::runtime_error("set JAMILA_API_KEY before calling a remote provider");

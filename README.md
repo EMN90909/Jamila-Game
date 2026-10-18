@@ -1,8 +1,29 @@
 # Jamila Game · Godot Development Agent
 
-**Native C++17 desktop + a real Godot MCP tool-calling loop.** Jamila Game focuses on Godot project exploration, scenes, scripts, debugging, and controlled edits/playtests. The UI uses ink-black `#11110F` and paper-cream `#F4EEDF`. This is a functional **v0.3 native foundation**, not a complete port of the original VS Code-based Jamila-GD.
+**Native C++17 desktop + a Godot MCP tool-calling loop.** Jamila Game focuses on Godot project exploration, scenes, scripts, debugging, and controlled edits/playtests. The UI uses ink-black `#11110F` and paper-cream `#F4EEDF`. This is a functional **v0.4 native foundation**, not a complete port of the original VS Code-based Jamila-GD.
 
-## New in v0.3: Custom MCPs and approval notifications
+## New in v0.4: desktop notifications, specialist agents, Skills and native coding
+
+- **System-wide Linux notification actions:** Uses Freedesktop notification D-Bus with **OK / Review / Deny** actions when the daemon supports them. Works from a minimized X11 window. `dbus-monitor` and either `busctl` or `gdbus` are needed; falls back to the in-app approval prompt if unsupported. Mock D-Bus action tests pass, but a real notification daemon is not available in this test container.
+- **Parallel specialist agents:** `--team`, `/team on`, or the GUI Settings toggle starts Planner, Researcher and Tester as concurrent read-only model advisers, while Developer coordinates MCP and native tooling. A marketing adviser is included for game launch/marketing requests. Increased concurrency consumes additional model requests.
+- **Project Skills:** Load bounded local `SKILL.md` files from `.agents/skills`, `.jamila/skills`, `.claude/skills`, or `skills`, matching task text and descriptions. See [Skills guide](docs/MODEL_MCP_AND_SKILLS.md).
+- **Actually write Godot scripts:** Native workspace tools read, list, and atomically write files and create missing project directories without following symlink directories. These complement Godot MCP's scene/runtime tools. Writes require human approval in Human mode.
+- **Claude API support:** `--provider anthropic` or `JAMILA_PROVIDER=anthropic` converts OpenAI-style internal tool calls to native Anthropic Messages API, including `tool_use`/`tool_result` cycles. Uses `JAMILA_API_KEY` and `JAMILA_MODEL` environment variables. Mock integration tests pass; no authenticated Claude account was available to verify a real request.
+- **Diagnostics:** `--doctor` inspects configured project, server/tools and Skills. When connected, it attempts the actual Godot `get_godot_version` MCP call.
+- **Tests:** Eight CTest suites pass locally. See [the verification matrix](docs/RELIABILITY_2026-10-18.md) for hard limits on claims.
+
+```sh
+./build.sh
+# OpenAI-compatible model by default, or export JAMILA_PROVIDER=anthropic for Claude
+export JAMILA_API_KEY='YOUR_MODEL_API_KEY'
+export JAMILA_MODEL='YOUR_TOOL_CAPABLE_MODEL'
+./build/jamila-game --workspace /path/to/godot-project --godot-mcp --doctor
+./build/jamila-game --workspace /path/to/godot-project --godot-mcp --team --gui
+```
+
+**Real-server limitation:** No installed Godot executable, Godot MCP package, Docker GitHub MCP instance, or live API credentials are available in the build environment; network DNS is disabled. Our successful simulated model + MCP flow **does not** qualify as real Godot playtesting or live GitHub/Claude API verification.
+
+## Changes in v0.3: Custom MCPs and approval notifications
 
 - **Multi-server native host:** Connect independent Godot, GitHub and custom local stdio MCP servers. The model sees each server's advertised tools. Tool names are namespaced (`godot__...`, `github__...`) when multiple servers connect.
 - **Approval notifications:** In Human Approval mode the AI pauses at an actionable in-app notification with **OK** (continue), **Review** (inspect arguments and approve/deny) and **Deny**. X11 raises the window and rings its bell.

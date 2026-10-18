@@ -7,6 +7,7 @@
 #include <string>
 #include <cstdlib>
 #include <vector>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 #ifdef JAMILA_WITH_X11
@@ -19,9 +20,31 @@ bool approve(const std::string& action) {
     return std::getline(std::cin, line) && line == "YES";
 }
 void help() {
-    std::cout << "Commands: /help /new /history /doctor /tools /activity /settings /approval human|allow-all /tool NAME JSON /read REL /write REL TEXT /run EXEC ARG... /check-nqr REL /quit\n"
+    std::cout << "Commands: /help /new /history /doctor /tools /activity /settings /approval human|allow-all /team on|off /skills /tool NAME JSON /read REL /write REL TEXT /run EXEC ARG... /check-nqr REL /quit\n"
               << "Anything else uses your chat provider and, if connected, discovers Godot MCP tools.\n"
               << "Tool operations are local, explicit, and require confirmation for writes/commands.\n";
+}
+void doctor(jamila::Agent& agent) {
+    const auto& root=agent.config().workspace;
+    std::cout << "Workspace: " << root << "\n";
+    std::cout << "Godot project.godot: " << (fs::is_regular_file(root/"project.godot")?"found":"MISSING") << "\n";
+    std::cout << "Connected MCP processes: " << agent.server_count() << "\n";
+    std::cout << "Advertised MCP and native tools: " << agent.mcp_tools().size() << "\n";
+    std::cout << "Local Skills: " << agent.skills().size() << "\n";
+    std::cout << "Parallel advisors: " << (agent.team_mode()?"on":"off") << "\n";
+    for(const auto& e:agent.connection_errors())std::cout << "Connection failure: " << e << "\n";
+    std::string godot_tool;
+    for(const auto& tool:agent.mcp_tools()) {
+        if(tool.name=="get_godot_version" || tool.name=="godot__get_godot_version")godot_tool=tool.name;
+    }
+    if(!godot_tool.empty()){
+        std::cout << "Godot version MCP probe (real server call): ";
+        try{
+            auto result=agent.call_mcp(godot_tool,"{}");
+            std::cout << result.substr(0,600) << "\n";
+        }catch(const std::exception& e){std::cout << "FAILED: " << e.what() << "\n";}
+    }else std::cout << "Godot MCP live version probe: unavailable (not connected or tool not exposed)\n";
+    std::cout << "Note: MCP discovery != authenticated GitHub/Claude access or running Godot playtests.\n";
 }
 void interactive(jamila::Agent& agent) {
     agent.set_approval([](const std::string& name, const std::string& args) {
@@ -48,15 +71,17 @@ void interactive(jamila::Agent& agent) {
                 agent.set_approval_mode(line=="/approval human" ? jamila::ApprovalMode::Human : jamila::ApprovalMode::AllowAll);
                 std::cout << "Approval settings saved.\n";
             }
-            else if (line == "/doctor") {
-                std::cout << "Godot project: " << (fs::exists(agent.config().workspace / "project.godot") ? "detected" : "not detected")
-                          << "\nGodot MCP: " << (agent.has_mcp() ? "connected" : "not connected")
-                          << "\nConnected servers: " << agent.server_count() << "\nDiscovered tools: " << agent.mcp_tools().size() << "\n";
-                for (const auto& e: agent.connection_errors()) std::cout << "Connection error: " << e << "\n";
-            }
+            else if (line == "/doctor") doctor(agent);
             else if (line == "/tools") {
                 if (!agent.has_mcp()) std::cout << "Not connected. Use --godot-mcp or --mcp-config.\n";
                 for (auto& t : agent.mcp_tools()) std::cout << " - " << t.name << "  " << t.description.substr(0, 115) << "\n";
+            }
+            else if (line == "/skills") {
+                for(const auto& skill:agent.skills()) std::cout << skill.name << " : " << skill.description << "\n";
+            }
+            else if (line == "/team on" || line == "/team off") {
+                agent.set_team_mode(line=="/team on");
+                std::cout << (agent.team_mode()?"Parallel advisors enabled":"Parallel advisors disabled") << "\n";
             }
             else if (line == "/activity") { for (auto& event : agent.activity()) std::cout << event << "\n"; }
             else if (line.rfind("/tool ",0)==0) {
@@ -95,6 +120,7 @@ int main(int argc, char** argv) {
         jamila::Config cfg;
         cfg.workspace = fs::current_path();
         bool gui = false;
+        bool diagnostic = false;
         bool godot_mcp = false;
         std::string ask;
         std::string mcp_config;
@@ -104,6 +130,10 @@ int main(int argc, char** argv) {
             if (opt == "--workspace" && i + 1 < argc) cfg.workspace = argv[++i];
             else if (opt == "--ask" && i + 1 < argc) ask = argv[++i];
             else if (opt == "--gui") gui = true;
+            else if (opt == "--doctor") diagnostic = true;
+            else if (opt == "--team") cfg.team_mode = true;
+            else if (opt == "--provider" && i+1<argc) cfg.provider=argv[++i];
+            else if (opt == "--no-team") cfg.team_mode = false;
             else if (opt == "--godot-mcp") godot_mcp = true;
             else if (opt == "--mcp-config" && i+1<argc) mcp_config=argv[++i];
             else if (opt == "--approval-mode" && i+1<argc) approval_override=argv[++i];
@@ -118,7 +148,7 @@ int main(int argc, char** argv) {
                 cfg.mcp_command.push_back(argv[++i]);
             }
             else if (opt == "--help") { std::cout << "jamila-game [--workspace GODOT_PROJECT] [--ask PROMPT] [--gui] [--godot-mcp]\n"
-                    << "             [--mcp-config servers.json] [--approval-mode human|allow-all]\n"
+                    << "             [--mcp-config servers.json] [--provider openai|anthropic] [--approval-mode human|allow-all] [--team] [--doctor]\n"
                     << "             [--mcp-bin SERVER_EXECUTABLE [--mcp-arg ARG] ...]\n"; return 0; }
             else throw std::invalid_argument("unknown/missing option: " + opt);
         }
@@ -135,7 +165,8 @@ int main(int argc, char** argv) {
             cfg.approval_mode=approval_override=="human" ? jamila::ApprovalMode::Human : jamila::ApprovalMode::AllowAll;
         }
         jamila::Agent agent(std::move(cfg));
-        if (!ask.empty()) std::cout << agent.ask(ask) << '\n';
+        if (diagnostic) doctor(agent);
+        else if (!ask.empty()) std::cout << agent.ask(ask) << '\n';
         else if (gui) {
 #ifdef JAMILA_WITH_X11
             launch_window(agent);
