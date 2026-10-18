@@ -1,0 +1,10 @@
+// Noqeri Stage-2 checkable source example. This is not loaded/executed at runtime.
+// Noqeri has not qualified native ABI integration. Run: noqeri check policies/workspace.nqr
+function allowed_operation(is_write: int, approved: int): int {
+    if is_write == 1 {
+        return approved
+    }
+    return 1
+}
+
+print(allowed_operation(1, 0))

@@ -1,0 +1,10 @@
+/build/
+*.o
+*.a
+*.so
+.env
+.env.*
+!.env.example
+.DS_Store
+zig-cache/
+.zig-cache/

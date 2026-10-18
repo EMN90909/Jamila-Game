@@ -1,0 +1,21 @@
+name: Native C++ checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libcurl4-openssl-dev libjson-c-dev libx11-dev xvfb
+      - name: Build and test
+        run: bash ./build.sh
+      - name: GUI launch smoke check
+        run: |
+          set +e
+          timeout 5s xvfb-run -a ./build/jamila-game --gui
+          status=$?
+          test "$status" -eq 124
