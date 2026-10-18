@@ -10,7 +10,7 @@
 | Task orchestration | `src/core/controller/index.ts` (~1,091 lines), `src/core/task/*`, `src/core/tools/*` | Separate controller, persistence, approvals, tool orchestration, cancellation, errors and request limits. |
 | Provider APIs | `src/api/providers/*` (40+ source files) | Common OpenAI-compatible HTTP implemented; native Anthropic/Gemini/Bedrock/OpenRouter-specific adapters are not yet ported. |
 | Tool security | `src/core/tools/bashTool.ts`, `readTool.ts`, `writeTool.ts` | Upstream tool schemas can request arbitrary commands and overwrite files. Do not grant unreviewed auto-execution. Native first step requires explicit approval, workspace checks and argument-vector execution. |
-| MCP | `src/services/mcp/McpHub.ts` (~1,092 lines), `proto/mcp.proto` | HTTP/SSE/stdio discovery, trust and permissions are nontrivial; no MCP capability has been ported. |
+| MCP | `src/services/mcp/McpHub.ts` (~1,092 lines), `proto/mcp.proto` | A native stdio MCP transport and Godot tool-calling orchestration now exist (v0.2); HTTP/SSE, broad providers and editor integration remain unported. |
 | Web/browser | `src/services/browser/*`, `src/core/tools/browserActionTool.ts` | Chrome/CDP integration not available in this first native milestone. |
 | UI | `webview-ui/src/App.tsx`, `webview-ui/src/components/*`, CSS/Tailwind | Original screens include chat, settings, history, account and MCP. Current native X11 GUI implements just chat/new-task with specified theme. |
 | Protocols | `proto/*.proto`, `src/shared/*` | Reuse documented contracts later via generated native protobuf types if feasible; not currently equivalent. |
@@ -31,7 +31,8 @@
 | Filesystem race-resistant isolation (dirfd/openat2) | Not hardened; current canonical-path checks do not prevent hostile concurrent symlink changes |
 | Streaming, retry/backoff, cancellation and timeouts for subprocesses | Not ported |
 | Native multi-provider adapters | Not ported |
-| MCP resource/tool server integrations | Not ported |
+| Godot MCP stdio tool integration, approval, model tool-call loop | Implemented; protocol-mock tested |
+| MCP Streamable HTTP, resources, prompts and rich media | Not ported |
 | Browser automation/screenshots | Not ported |
 | Production-quality Unicode text, accessibility, Windows/macOS GUI | Not ported |
 
@@ -41,7 +42,7 @@
 2. Add provider adapter contract and mocks for supported APIs; stream responses, sanitize content and implement cancellation/rate-limit handling.
 3. Implement robust tool-runner security using OS-level confinement, approval tokens and file diffs/rollback. Never allow model-provided commands to bypass approvals.
 4. Add persisted task transcripts/checkpoints, token/cost counters, prompt budgets and feature parity regression tests.
-5. Port MCP client with strict permission boundaries and browser integration; support editor plugins through an optional native host interface.
+5. Expand MCP beyond stdio tools (resources, prompts, live editor, browser) and validate against a real Godot editor.
 6. Revisit Noqeri runtime bindings **only after** upstream ABI/compiler tests pass, and qualify Zig builds in CI with a pinned known-good toolchain.
 
 ## Testing notes

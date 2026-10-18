@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <cstdlib>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -18,11 +19,14 @@ bool approve(const std::string& action) {
     return std::getline(std::cin, line) && line == "YES";
 }
 void help() {
-    std::cout << "Commands: /help /new /history /read REL /write REL TEXT /run EXEC ARG... /check-nqr REL /quit\n"
-              << "Anything else is sent to your configured OpenAI-compatible chat provider.\n"
+    std::cout << "Commands: /help /new /history /doctor /tools /activity /tool NAME JSON /read REL /write REL TEXT /run EXEC ARG... /check-nqr REL /quit\n"
+              << "Anything else uses your chat provider and, if connected, discovers Godot MCP tools.\n"
               << "Tool operations are local, explicit, and require confirmation for writes/commands.\n";
 }
 void interactive(jamila::Agent& agent) {
+    agent.set_approval([](const std::string& name, const std::string& args) {
+        return approve("Godot MCP " + name + " with args: " + args.substr(0, 1200));
+    });
     help();
     std::string line;
     while (std::cout << "\njamila> " << std::flush, std::getline(std::cin, line)) {
@@ -31,6 +35,21 @@ void interactive(jamila::Agent& agent) {
         try {
             if (line == "/help") help();
             else if (line == "/new") { agent.clear(); std::cout << "New session.\n"; }
+            else if (line == "/doctor") {
+                std::cout << "Godot project: " << (fs::exists(agent.config().workspace / "project.godot") ? "detected" : "not detected")
+                          << "\nGodot MCP: " << (agent.has_mcp() ? "connected" : "not connected")
+                          << "\nDiscovered tools: " << agent.mcp_tools().size() << "\n";
+            }
+            else if (line == "/tools") {
+                if (!agent.has_mcp()) std::cout << "Not connected. Restart with --godot-mcp.\n";
+                for (auto& t : agent.mcp_tools()) std::cout << " - " << t.name << "  " << t.description.substr(0, 115) << "\n";
+            }
+            else if (line == "/activity") { for (auto& event : agent.activity()) std::cout << event << "\n"; }
+            else if (line.rfind("/tool ",0)==0) {
+                auto end = line.find(' ',6);
+                if (end==std::string::npos) throw std::invalid_argument("usage: /tool NAME JSON");
+                std::cout << agent.call_mcp(line.substr(6,end-6),line.substr(end+1)) << "\n";
+            }
             else if (line == "/history") { for (const auto& msg : agent.history()) std::cout << msg.role << ": " << msg.content << "\n"; }
             else if (line.rfind("/read ", 0) == 0) std::cout << jamila::read_text(agent.config().workspace, line.substr(6)) << "\n";
             else if (line.rfind("/write ", 0) == 0) {
@@ -62,15 +81,28 @@ int main(int argc, char** argv) {
         jamila::Config cfg;
         cfg.workspace = fs::current_path();
         bool gui = false;
+        bool godot_mcp = false;
         std::string ask;
         for (int i=1; i<argc; ++i) {
             const std::string opt = argv[i];
             if (opt == "--workspace" && i + 1 < argc) cfg.workspace = argv[++i];
             else if (opt == "--ask" && i + 1 < argc) ask = argv[++i];
             else if (opt == "--gui") gui = true;
-            else if (opt == "--help") { std::cout << "jamila-game [--workspace PATH] [--ask PROMPT] [--gui]\n"; return 0; }
+            else if (opt == "--godot-mcp") godot_mcp = true;
+            else if (opt == "--mcp-bin" && i + 1 < argc) {
+                godot_mcp = true;
+                cfg.mcp_command.clear();
+                cfg.mcp_command.push_back(argv[++i]);
+            }
+            else if (opt == "--mcp-arg" && i + 1 < argc) {
+                godot_mcp = true;
+                if (cfg.mcp_command.empty()) throw std::invalid_argument("--mcp-bin must precede --mcp-arg");
+                cfg.mcp_command.push_back(argv[++i]);
+            }
+            else if (opt == "--help") { std::cout << "jamila-game [--workspace GODOT_PROJECT] [--ask PROMPT] [--gui] [--godot-mcp]\n" << "             [--mcp-bin SERVER_EXECUTABLE [--mcp-arg ARG] ...]\n"; return 0; }
             else throw std::invalid_argument("unknown/missing option: " + opt);
         }
+        if (godot_mcp && cfg.mcp_command.empty()) cfg.mcp_command = {"npx", "-y", "@coding-solo/godot-mcp@0.1.1"};
         jamila::Agent agent(std::move(cfg));
         if (!ask.empty()) std::cout << agent.ask(ask) << '\n';
         else if (gui) {

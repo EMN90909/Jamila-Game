@@ -111,10 +111,12 @@ Agent::Agent(Config config) : config_(std::move(config)) {
     if (config_.api_url.empty()) config_.api_url = env_or("JAMILA_API_URL", "https://api.openai.com/v1/chat/completions");
     if (config_.api_key.empty()) config_.api_key = env_or("JAMILA_API_KEY", "");
     if (config_.model.empty()) config_.model = env_or("JAMILA_MODEL", "gpt-4o-mini");
+    if (!config_.mcp_command.empty()) mcp_ = std::make_unique<McpClient>(config_.workspace, config_.mcp_command);
 }
 
 std::string Agent::ask(const std::string& prompt) {
     if (prompt.empty() || prompt.size() > 32768) throw std::invalid_argument("prompt must be 1..32768 bytes");
+    if (mcp_) return ask_godot(prompt);
     if (config_.api_key.empty() && config_.api_url.rfind("http://localhost:", 0) != 0 &&
         config_.api_url.rfind("http://127.0.0.1:", 0) != 0)
         throw std::runtime_error("set JAMILA_API_KEY before calling a remote provider");
@@ -127,7 +129,7 @@ std::string Agent::ask(const std::string& prompt) {
     auto* messages = json_object_new_array();
     json_object_array_add(messages, json_object_new_object());
     json_object_object_add(json_object_array_get_idx(messages, 0), "role", json_object_new_string("system"));
-    json_object_object_add(json_object_array_get_idx(messages, 0), "content", json_object_new_string("You are Jamila, a cautious coding assistant. Propose changes in plain text. You cannot execute tools from chat. Never assume code was edited or commands run."));
+    json_object_object_add(json_object_array_get_idx(messages, 0), "content", json_object_new_string("You are Jamila Game, a Godot 4 game-development assistant. Help with gameplay systems, scenes, GDScript, C++ GDExtension, debugging, performance, and test design. This chat mode has NO Godot MCP tools connected: explain how to connect with --godot-mcp. Never claim to have edited or executed anything."));
     for (const auto& msg : history_) {
         auto* item = json_object_new_object();
         json_object_object_add(item, "role", json_object_new_string(msg.role.c_str()));
