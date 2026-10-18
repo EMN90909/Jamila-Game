@@ -22,6 +22,7 @@ private:
     int monitor_fd_ = -1;
     uint32_t notification_id_ = 0;
     std::string monitor_buffer_;
+    std::string owner_;
     int state_ = 0;
     void close_monitor();
     std::string consume_line(const std::string& line);

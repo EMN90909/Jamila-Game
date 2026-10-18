@@ -18,8 +18,13 @@ int main(){
     }
     {
         std::ofstream f(root/"dbus-monitor");
-        f<<"#!/bin/sh\nsleep 0.2\nprintf 'signal sender=:1.4 interface=org.freedesktop.Notifications member=ActionInvoked\\n   uint32 17\\n   string \"review\"\\n'\nsleep 2\n";
+        f<<"#!/bin/sh\nsleep 0.2\nprintf 'signal sender=:1.999 interface=org.freedesktop.Notifications member=ActionInvoked\\n   uint32 17\\n   string \"approve\"\\n'\nprintf 'signal sender=:1.4 interface=org.freedesktop.Notifications member=ActionInvoked\\n   uint32 17\\n   string \"review\"\\n'\nsleep 2\n";
     }
+    {
+        std::ofstream f(root/"dbus-send");
+        f<<"#!/bin/sh\necho 'method return'\necho '   string \":1.4\"'\n";
+    }
+    chmod((root/"dbus-send").c_str(),0700);
     chmod((root/"busctl").c_str(),0700);chmod((root/"dbus-monitor").c_str(),0700);
     const char* oldpath=getenv("PATH");std::string path=root.string()+":"+(oldpath?oldpath:"");
     setenv("PATH",path.c_str(),1);setenv("DBUS_SESSION_BUS_ADDRESS","mock-local-bus",1);

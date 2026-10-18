@@ -1,6 +1,7 @@
 #include "jamila/notifications.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cerrno>
 #include <csignal>
 #include <fcntl.h>
@@ -65,20 +66,6 @@ DesktopApprovalNotification::~DesktopApprovalNotification(){close_monitor();}
 bool DesktopApprovalNotification::show(const std::string& tool){
     notification_id_=0;
     if(!getenv("DBUS_SESSION_BUS_ADDRESS"))return false;
-    // Monitor starts before Notify to avoid losing a fast click.
-    int p[2]; if(pipe(p))return false;
-    monitor_pid_=fork();
-    if(monitor_pid_<0){close(p[0]);close(p[1]);return false;}
-    if(monitor_pid_==0){
-        dup2(p[1],STDOUT_FILENO);close(p[0]);close(p[1]);
-        int devnull=open("/dev/null",O_WRONLY|O_CLOEXEC);
-        if(devnull>=0){dup2(devnull,STDERR_FILENO);close(devnull);}
-        execlp("dbus-monitor","dbus-monitor","--session",
-               "type='signal',interface='org.freedesktop.Notifications',member='ActionInvoked'",(char*)nullptr);
-        _exit(127);
-    }
-    close(p[1]);monitor_fd_=p[0];
-    fcntl(monitor_fd_,F_SETFL,fcntl(monitor_fd_,F_GETFL)|O_NONBLOCK);
     // Check actual daemon capabilities. If it does not advertise action buttons,
     // leave the in-app approval prompt as the only decision point.
     auto caps=run({"busctl","--user","call","org.freedesktop.Notifications","/org/freedesktop/Notifications",
@@ -90,6 +77,31 @@ bool DesktopApprovalNotification::show(const std::string& tool){
         gdbus=true;
     }
     if(caps.exit_code!=0 || caps.output.find("actions")==std::string::npos){close_monitor();return false;}
+    // ActionInvoked signals are authority-bearing. Only listen to the current
+    // unique bus owner of org.freedesktop.Notifications, not arbitrary apps.
+    auto owner=run({"dbus-send","--session","--print-reply","--dest=org.freedesktop.DBus",
+        "/org/freedesktop/DBus","org.freedesktop.DBus.GetNameOwner","string:org.freedesktop.Notifications"},1500);
+    if(owner.exit_code!=0){
+        owner=run({"gdbus","call","--session","--dest","org.freedesktop.DBus","--object-path","/org/freedesktop/DBus",
+            "--method","org.freedesktop.DBus.GetNameOwner","org.freedesktop.Notifications"},1500);
+    }
+    std::smatch match;
+    if(owner.exit_code!=0 || !std::regex_search(owner.output,match,std::regex("(:[0-9]+\\.[0-9]+)"))){close_monitor();return false;}
+    owner_=match[1].str();
+    // Monitor starts before Notify to avoid missing a fast click.
+    int p[2]; if(pipe(p))return false;
+    monitor_pid_=fork();
+    if(monitor_pid_<0){close(p[0]);close(p[1]);return false;}
+    if(monitor_pid_==0){
+        dup2(p[1],STDOUT_FILENO);close(p[0]);close(p[1]);
+        int devnull=open("/dev/null",O_WRONLY|O_CLOEXEC);
+        if(devnull>=0){dup2(devnull,STDERR_FILENO);close(devnull);}
+        const std::string match_rule="type='signal',sender='"+owner_+"',interface='org.freedesktop.Notifications',member='ActionInvoked'";
+        execlp("dbus-monitor","dbus-monitor","--session",match_rule.c_str(),(char*)nullptr);
+        _exit(127);
+    }
+    close(p[1]);monitor_fd_=p[0];
+    fcntl(monitor_fd_,F_SETFL,fcntl(monitor_fd_,F_GETFL)|O_NONBLOCK);
     const std::string summary="Jamila Game: approval required";
     // Never send tool arguments or API credentials to the system notification daemon.
     const std::string safe_tool=tool.substr(0,120);
@@ -119,7 +131,13 @@ bool DesktopApprovalNotification::show(const std::string& tool){
     return true;
 }
 std::string DesktopApprovalNotification::consume_line(const std::string& line){
-    if(line.find("member=ActionInvoked")!=std::string::npos){state_=1;return {};}
+    if(line.find("member=ActionInvoked")!=std::string::npos){
+        const auto sender="sender="+owner_;
+        state_=line.find(sender)!=std::string::npos &&
+            (line.size()==line.find(sender)+sender.size() ||
+             !std::isdigit(static_cast<unsigned char>(line[line.find(sender)+sender.size()])))?1:0;
+        return {};
+    }
     if(state_==1){
         const auto prefix="uint32 "+std::to_string(notification_id_);
         if(std::regex_search(line,std::regex(prefix+"([^0-9]|$)"))){state_=2;return {};}
